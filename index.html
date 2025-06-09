@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shader Showcase</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Shader Showcase</h1>
+        </header>
+        <main>
+            <div class="main-view">
+                <canvas id="main-canvas"></canvas>
+                <p id="shader-name">Loading...</p>
+            </div>
+            <aside id="gallery" class="gallery-view">
+                <div class="loader"></div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- glsl-canvasライブラリをCDNから読み込み -->
+    <script src="https://unpkg.com/glsl-canvas@0.2.6/dist/GlslCanvas.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const mainCanvas = document.getElementById('main-canvas');
+            const gallery = document.getElementById('gallery');
+            const shaderNameEl = document.getElementById('shader-name');
+            const sandbox = new GlslCanvas(mainCanvas);
+
+            let activeItem = null;
+
+            // GitHub API経由でシェーダーファイルリストを取得する非同期関数
+            async function fetchAndRenderShaders() {
+                try {
+                    // リポジトリ情報をURLから動的に取得
+                    const owner = window.location.hostname.split('.')[0];
+                    const pathParts = window.location.pathname.split('/').filter(p => p);
+                    const repo = pathParts[0];
+
+                    if (!owner || !repo) {
+                        throw new Error('Could not determine GitHub repository from URL.');
+                    }
+
+                    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/frag`;
+
+                    const response = await fetch(apiUrl);
+                    if (!response.ok) {
+                        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+                    }
+
+                    const contents = await response.json();
+                    const shaderFiles = contents
+                        .filter(file => file.type === 'file' && file.name.endsWith('.frag'))
+                        .map(file => file.name);
+
+                    // ローディングスピナーを削除
+                    gallery.innerHTML = '';
+
+                    if (shaderFiles.length === 0) {
+                        gallery.innerHTML = '<p>No .frag files found in /frag directory.</p>';
+                        shaderNameEl.textContent = 'No shaders found.';
+                        return;
+                    }
+
+                    // 取得したリストを元にギャラリーを生成
+                    shaderFiles.forEach(fileName => {
+                        const item = document.createElement('div');
+                        item.className = 'gallery-item';
+
+                        const thumbCanvas = document.createElement('canvas');
+                        item.appendChild(thumbCanvas);
+                        gallery.appendChild(item);
+
+                        // サムネイル用のGlslCanvasを初期化
+                        const thumbSandbox = new GlslCanvas(thumbCanvas);
+                        // `frag/` フォルダ内のファイルを指定
+                        thumbSandbox.load(`frag/${fileName}`);
+
+                        // クリックでメインビューにシェーダーをロード
+                        item.addEventListener('click', () => {
+                            loadShader(fileName, item);
+                        });
+                    });
+
+                    // 最初のシェーダーを自動でロード
+                    loadShader(shaderFiles[0], gallery.querySelector('.gallery-item'));
+
+                } catch (error) {
+                    console.error('Failed to fetch shader list:', error);
+                    gallery.innerHTML = `<p style="color: #f88;">Error loading shaders. Please check the browser console for details.</p>`;
+                    shaderNameEl.textContent = 'Error';
+                }
+            }
+
+            // メインビューに指定されたシェーダーをロードする関数
+            function loadShader(fileName, itemElement) {
+                // メインキャンバスにシェーダーをロード
+                sandbox.load(`frag/${fileName}`);
+                shaderNameEl.textContent = fileName;
+
+                // アクティブな項目のスタイルを更新
+                if (activeItem) {
+                    activeItem.classList.remove('active');
+                }
+                itemElement.classList.add('active');
+                activeItem = itemElement;
+            }
+
+            // 処理を開始
+            fetchAndRenderShaders();
+        });
+    </script>
+</body>
+
+</html>
