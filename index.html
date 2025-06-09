@@ -1,44 +1,144 @@
-<!DOCTYPE html>
-<html lang="ja">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shader Showcase</title>
-    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=Noto+Sans+JP:wght@400;500;700;900&display=swap"
+        rel="stylesheet">
+
+    <style>
+        :root {
+            --brand-color: #3b82f6;
+            /* blue-500 */
+            --brand-color-light: #dbeafe;
+            /* blue-100 */
+        }
+
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        .gallery-view::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .gallery-view::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            /* slate-100 */
+            border-radius: 10px;
+        }
+
+        .gallery-view::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            /* slate-300 */
+            border-radius: 10px;
+        }
+
+        .gallery-view::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+            /* slate-400 */
+        }
+
+        .loader {
+            border: 4px solid #f3f4f6;
+            /* gray-100 */
+            border-top: 4px solid var(--brand-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 4rem auto;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
 </head>
 
-<body>
-    <div class="container">
-        <header>
-            <h1>Shader Showcase</h1>
-        </header>
-        <main>
-            <div class="main-view">
-                <canvas id="main-canvas"></canvas>
-                <p id="shader-name">Loading...</p>
-            </div>
-            <aside id="gallery" class="gallery-view">
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="flex flex-col lg:flex-row h-screen">
+
+        <aside id="gallery"
+            class="gallery-view w-full lg:w-80 xl:w-96 bg-white border-r border-slate-200 p-4 lg:p-6 flex-shrink-0 h-1/3 lg:h-screen overflow-y-auto">
+            <header class="mb-6">
+                <h1 class="text-4xl font-bold text-slate-900">Shader Showcase</h1>
+                <p class="text-sm text-slate-500 mt-1">A curated collection of GLSL fragments.</p>
+            </header>
+            <div id="gallery-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-4">
                 <div class="loader"></div>
-            </aside>
+            </div>
+        </aside>
+
+        <main class="flex-grow p-4 md:p-8 flex flex-col h-2/3 lg:h-screen">
+            <div class="mb-4 lg:mb-6">
+                <h2 id="shader-title"
+                    class="text-5xl lg:text-5xl font-extrabold tracking-tight inline-block bg-gradient-to-br from-blue-600 to-sky-400 bg-clip-text text-transparent pb-2 select-none">
+                    Loading...
+                </h2>
+            </div>
+            <div class="flex-grow relative w-full">
+                <canvas id="main-canvas" class="w-full h-full rounded-xl shadow-2xl bg-slate-800"></canvas>
+                <div id="error-overlay"
+                    class="absolute inset-0 bg-red-100 text-red-800 p-8 flex-col items-center justify-center font-mono text-sm whitespace-pre-wrap overflow-auto hidden rounded-xl">
+                    <h3 class="font-bold text-lg mb-4">Shader Compilation Error</h3>
+                    <p id="error-message"></p>
+                </div>
+            </div>
         </main>
     </div>
 
-    <!-- glsl-canvasライブラリをCDNから読み込み -->
-    <script src="https://cdn.jsdelivr.net/npm/glslCanvas@0.2.6/dist/GlslCanvas.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const mainCanvas = document.getElementById('main-canvas');
-            const gallery = document.getElementById('gallery');
-            const shaderNameEl = document.getElementById('shader-name');
-            const sandbox = new GlslCanvas(mainCanvas);
+            const shaderTitleEl = document.getElementById('shader-title');
+            const galleryGrid = document.getElementById('gallery-grid');
+            const errorOverlay = document.getElementById('error-overlay');
+            const errorMessageEl = document.getElementById('error-message');
 
-            let activeItem = null;
+            const localShaderFiles = [
+                "cube.frag",
+                "cyclic.frag",
+            ];
 
-            // GitHub API経由でシェーダーファイルリストを取得する非同期関数
-            async function fetchAndRenderShaders() {
+            let gl;
+            let currentProgram;
+            let currentAnimationId;
+            let startTime;
+            let mousePos = { x: 0.5, y: 0.5 };
+            let activeShaderItem = null;
+
+            const vsSource = `
+                attribute vec4 a_position;
+                void main() {
+                    gl_Position = a_position;
+                }
+            `;
+
+            const isLocal = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+
+            if (isLocal) {
+                console.log("Running in local mode. Create dummy `frag` folder with shaders.");
+                renderGallery(localShaderFiles);
+            } else {
+                console.log("Running on GitHub Pages. Fetching from API.");
+                fetchShadersFromGitHub();
+            }
+
+            async function fetchShadersFromGitHub() {
                 try {
-                    // リポジトリ情報をURLから動的に取得
                     const owner = window.location.hostname.split('.')[0];
                     const pathParts = window.location.pathname.split('/').filter(p => p);
                     const repo = pathParts[0];
@@ -48,72 +148,246 @@
                     }
 
                     const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/frag`;
-
                     const response = await fetch(apiUrl);
                     if (!response.ok) {
-                        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+                        throw new Error(`GitHub API Error: ${response.status} ${response.statusText}`);
                     }
-
                     const contents = await response.json();
                     const shaderFiles = contents
                         .filter(file => file.type === 'file' && file.name.endsWith('.frag'))
-                        .map(file => file.name);
-
-                    // ローディングスピナーを削除
-                    gallery.innerHTML = '';
+                        .map(file => file.name)
+                        .sort();
 
                     if (shaderFiles.length === 0) {
-                        gallery.innerHTML = '<p>No .frag files found in /frag directory.</p>';
-                        shaderNameEl.textContent = 'No shaders found.';
-                        return;
+                        throw new Error("No .frag files found in the 'frag' directory.");
                     }
 
-                    // 取得したリストを元にギャラリーを生成
-                    shaderFiles.forEach(fileName => {
-                        const item = document.createElement('div');
-                        item.className = 'gallery-item';
-
-                        const thumbCanvas = document.createElement('canvas');
-                        item.appendChild(thumbCanvas);
-                        gallery.appendChild(item);
-
-                        // サムネイル用のGlslCanvasを初期化
-                        const thumbSandbox = new GlslCanvas(thumbCanvas);
-                        // `frag/` フォルダ内のファイルを指定
-                        thumbSandbox.load(`frag/${fileName}`);
-
-                        // クリックでメインビューにシェーダーをロード
-                        item.addEventListener('click', () => {
-                            loadShader(fileName, item);
-                        });
-                    });
-
-                    // 最初のシェーダーを自動でロード
-                    loadShader(shaderFiles[0], gallery.querySelector('.gallery-item'));
+                    renderGallery(shaderFiles);
 
                 } catch (error) {
                     console.error('Failed to fetch shader list:', error);
-                    gallery.innerHTML = `<p style="color: #f88;">Error loading shaders. Please check the browser console for details.</p>`;
-                    shaderNameEl.textContent = 'Error';
+                    galleryGrid.innerHTML = `<p class="col-span-full text-red-500">${error.message}</p>`;
+                    shaderTitleEl.textContent = 'Error';
+                    shaderTitleEl.classList.remove('bg-gradient-to-br', 'from-blue-600', 'to-sky-400', 'bg-clip-text', 'text-transparent');
+                    shaderTitleEl.classList.add('text-red-500');
                 }
             }
 
-            // メインビューに指定されたシェーダーをロードする関数
-            function loadShader(fileName, itemElement) {
-                // メインキャンバスにシェーダーをロード
-                sandbox.load(`frag/${fileName}`);
-                shaderNameEl.textContent = fileName;
+            async function renderGallery(shaderFiles) {
+                galleryGrid.innerHTML = '';
+                const shaderSources = {};
 
-                // アクティブな項目のスタイルを更新
-                if (activeItem) {
-                    activeItem.classList.remove('active');
+                const loadingPromises = shaderFiles.map(async (fileName) => {
+                    const name = fileName.replace('.frag', '');
+                    const item = document.createElement('div');
+                    item.className = 'gallery-item group cursor-pointer aspect-square bg-slate-100 rounded-lg overflow-hidden relative border-2 border-transparent transition-all duration-300 hover:border-blue-500';
+                    item.dataset.shaderName = fileName;
+
+                    const canvas = document.createElement('canvas');
+                    canvas.className = 'w-full h-full transition-transform duration-300 group-hover:scale-110';
+
+                    const title = document.createElement('p');
+                    title.className = 'absolute bottom-2 left-2 text-white text-sm font-medium bg-black/40 px-2 py-1 rounded drop-shadow';
+                    title.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+
+                    item.appendChild(canvas);
+                    item.appendChild(title);
+                    galleryGrid.appendChild(item);
+
+                    try {
+                        const source = await fetchShaderSource(fileName);
+                        shaderSources[fileName] = source;
+                        renderThumbnail(canvas, source);
+                    } catch (e) {
+                        console.error(`Failed to load thumbnail for ${fileName}`, e);
+                        const errorIndicator = document.createElement('div');
+                        errorIndicator.className = 'absolute inset-0 bg-red-500/50 flex items-center justify-center text-white font-bold';
+                        errorIndicator.textContent = 'ERR';
+                        item.appendChild(errorIndicator);
+                    }
+                });
+
+                await Promise.all(loadingPromises);
+
+                galleryGrid.addEventListener('click', (e) => {
+                    const item = e.target.closest('.gallery-item');
+                    if (item) {
+                        const fileName = item.dataset.shaderName;
+                        if (shaderSources[fileName]) {
+                            loadShaderInMainView(fileName, shaderSources[fileName], item);
+                        }
+                    }
+                });
+
+                if (shaderFiles.length > 0) {
+                    const firstItem = galleryGrid.querySelector('.gallery-item');
+                    if (firstItem) {
+                        loadShaderInMainView(shaderFiles[0], shaderSources[shaderFiles[0]], firstItem);
+                    }
                 }
-                itemElement.classList.add('active');
-                activeItem = itemElement;
             }
 
-            // 処理を開始
-            fetchAndRenderShaders();
+            async function fetchShaderSource(fileName) {
+                const response = await fetch(`./frag/${fileName}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return await response.text();
+            }
+
+            function createWebGLProgram(ctx, vs, fs) {
+                const vsShader = compileShader(ctx, ctx.VERTEX_SHADER, vs);
+                const fsShader = compileShader(ctx, ctx.FRAGMENT_SHADER, fs);
+                if (!vsShader || !fsShader) return null;
+
+                const program = ctx.createProgram();
+                ctx.attachShader(program, vsShader);
+                ctx.attachShader(program, fsShader);
+                ctx.linkProgram(program);
+
+                if (!ctx.getProgramParameter(program, ctx.LINK_STATUS)) {
+                    const error = `Failed to link program: ${ctx.getProgramInfoLog(program)}`;
+                    console.error(error);
+                    showError(error);
+                    return null;
+                }
+                return program;
+            }
+
+            function compileShader(ctx, type, source) {
+                const shader = ctx.createShader(type);
+                ctx.shaderSource(shader, source);
+                ctx.compileShader(shader);
+
+                if (!ctx.getShaderParameter(shader, ctx.COMPILE_STATUS)) {
+                    const error = `Shader compile error:\n${ctx.getShaderInfoLog(shader)}`;
+                    console.error(error);
+                    showError(error);
+                    ctx.deleteShader(shader);
+                    return null;
+                }
+                return shader;
+            }
+
+            function renderThumbnail(canvas, fragSource) {
+                const ctx = canvas.getContext('webgl', { antialias: true, preserveDrawingBuffer: true });
+                if (!ctx) { console.error('WebGL not supported for thumbnail'); return; }
+
+                const program = createWebGLProgram(ctx, vsSource, fragSource);
+                if (!program) return;
+
+                const positionBuffer = ctx.createBuffer();
+                ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
+                ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), ctx.STATIC_DRAW);
+
+                const positionLocation = ctx.getAttribLocation(program, "a_position");
+                ctx.enableVertexAttribArray(positionLocation);
+                ctx.vertexAttribPointer(positionLocation, 2, ctx.FLOAT, false, 0, 0);
+
+                ctx.useProgram(program);
+
+                const resolutionLocation = ctx.getUniformLocation(program, "u_resolution");
+                const timeLocation = ctx.getUniformLocation(program, "u_time");
+
+                canvas.width = canvas.clientWidth;
+                canvas.height = canvas.clientHeight;
+                ctx.viewport(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.uniform2f(resolutionLocation, ctx.canvas.width, ctx.canvas.height);
+                ctx.uniform1f(timeLocation, 2.0);
+
+                ctx.drawArrays(ctx.TRIANGLE_STRIP, 0, 4);
+            }
+
+            function loadShaderInMainView(fileName, fragSource, itemElement) {
+                hideError();
+                if (currentAnimationId) {
+                    cancelAnimationFrame(currentAnimationId);
+                }
+
+                if (activeShaderItem) {
+                    activeShaderItem.classList.remove('border-blue-500', 'ring-2', 'ring-blue-300');
+                    activeShaderItem.classList.add('border-transparent');
+                }
+                itemElement.classList.add('border-blue-500', 'ring-2', 'ring-blue-300');
+                itemElement.classList.remove('border-transparent');
+                activeShaderItem = itemElement;
+
+                const name = fileName.replace('.frag', '');
+                shaderTitleEl.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+
+                if (!gl) {
+                    gl = mainCanvas.getContext('webgl', { antialias: true });
+                    if (!gl) {
+                        showError("WebGL is not supported by your browser.");
+                        return;
+                    }
+
+                    const positionBuffer = gl.createBuffer();
+                    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+
+                    mainCanvas.addEventListener('mousemove', e => {
+                        const rect = mainCanvas.getBoundingClientRect();
+                        mousePos.x = (e.clientX - rect.left) / rect.width;
+                        mousePos.y = 1.0 - (e.clientY - rect.top) / rect.height;
+                    });
+                }
+
+                currentProgram = createWebGLProgram(gl, vsSource, fragSource);
+                if (!currentProgram) {
+                    mainCanvas.style.opacity = '0.2';
+                    return;
+                }
+                mainCanvas.style.opacity = '1';
+
+                const positionLocation = gl.getAttribLocation(currentProgram, "a_position");
+                gl.enableVertexAttribArray(positionLocation);
+                gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+                gl.useProgram(currentProgram);
+
+                startTime = performance.now();
+                animate();
+            }
+
+            function animate(now) {
+                if (!gl || !currentProgram) return;
+
+                const dpr = window.devicePixelRatio || 1;
+                const displayWidth = Math.round(mainCanvas.clientWidth * dpr);
+                const displayHeight = Math.round(mainCanvas.clientHeight * dpr);
+
+                if (mainCanvas.width !== displayWidth || mainCanvas.height !== displayHeight) {
+                    mainCanvas.width = displayWidth;
+                    mainCanvas.height = displayHeight;
+                    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+                }
+
+                const elapsedTime = (now - startTime) / 1000.0;
+
+                const resolutionLocation = gl.getUniformLocation(currentProgram, "u_resolution");
+                const timeLocation = gl.getUniformLocation(currentProgram, "u_time");
+                const mouseLocation = gl.getUniformLocation(currentProgram, "u_mouse");
+
+                gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
+                gl.uniform1f(timeLocation, elapsedTime);
+                gl.uniform2f(mouseLocation, mousePos.x * gl.canvas.width, mousePos.y * gl.canvas.height);
+
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+                currentAnimationId = requestAnimationFrame(animate);
+            }
+
+            function showError(message) {
+                errorOverlay.classList.remove('hidden');
+                errorOverlay.classList.add('flex');
+                errorMessageEl.textContent = message;
+            }
+
+            function hideError() {
+                errorOverlay.classList.add('hidden');
+                errorOverlay.classList.remove('flex');
+            }
         });
     </script>
 </body>
